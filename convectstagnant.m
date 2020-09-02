@@ -13,16 +13,25 @@ nm=5e13; %reference viscosity
 E=60*1000; %Activation energy
 R=8.3144621; %gas constant
 N=1.8; %Stress exponent
+
+%Set the following flags to 1 to produce figures in Green et al. (2020)
+%If no flags are activated, only Figure 2 (reference model) will be
+%produced.
+
 %Repeat run with increase heat flag
 IncHeat=0;
-%Pressure-dependent melting flag
+%Pressure-dependent melting flag (for large icy satellites)
 pDep=0;
-heatloop=0;
+%Produces data and rough figure for Figure 4 in Green et al. (2020)
+heatloop=0; 
+%Produces raw data for Figure 5 in Green et al. 2020
 transsect=0;
 
 k=@(T)2.21-(0.012*(T-273.2));
-K=@(T)5.4/(rho*Cp) + T*0;%k(T)./(rho*Cp);
+K=@(T)k(T)./(rho*Cp);
+K2=2.21/(rho*Cp);
 
+%Orbital and physical parameters for small and large satellites
 if pDep==0;
     g=1.315; %acceleration of gravity: Europa
     e=1.0e-10; %1/s average tidal strain rate: Europa
@@ -32,6 +41,7 @@ else
     e=1e-12; %Avg tidal strain rate: Ganymede (?)
     w=1.6177e-06; %orbital frequency: Ganymede
 end
+
 HRad=(4.5e-12)*rho; %Volumetric radiogenic heating rate
 
 
@@ -95,27 +105,51 @@ else
 end
 b0=zm0-zb0; %initial convective layer thickness
 TinitStefan=1; %flag for Stefan initial profile
+Benchmark=1; %Benchmark comparison between numerical solver and standard analytical stefan problem solution (Turcotte & Schubert, 2002)
 
 if TinitStefan==1;
-    %Stefan profile
-    LHS=(L*sqrt(pi))/(Cp*(Tc-Ts));
-    RHS=@(L)(exp(-L.^2))./((L.*erf(L)));
-    % Lambda=0
-    % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
-    Lambda=fsolve(@(L)RHS(L)-LHS,2);
-    %
-    % while LHS~=RHS
-    % Lambda=Lambda+.00001
-    % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
-    % end
-    
-    %
-    tall=[0:dt:tmax];%linspace(t0,tmax,dt);
-    ym=2*sqrt(tall)*Lambda*sqrt(K(273));
-    
-    eta=@(z,t)z/(2*sqrt(K(273)*t));
-    Ta=@(z,t,zm)Ts+erf(eta(z,t))./erf(Lambda)*(Tc-Ts)./(z<=zm);
-    size(tall);
+    if Benchmark==1;
+        %Stefan profile
+        LHS=(L*sqrt(pi))/(Cp*(Tm-Ts));
+        RHS=@(L)(exp(-L.^2))./((L.*erf(L)));
+        % Lambda=0
+        % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+        Lambda=fsolve(@(L)RHS(L)-LHS,2);
+        %
+        % while LHS~=RHS
+        % Lambda=Lambda+.00001
+        % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+        % end
+
+        %
+        tall=[0:dt:tmax];%linspace(t0,tmax,dt);
+        ym=2*sqrt(tall)*Lambda*sqrt(K2);
+
+        eta=@(z,t)z/(2*sqrt(K2*t));
+        Ta=@(z,t,zm)Ts+erf(eta(z,t))./erf(Lambda)*(Tm-Ts)./(z<=zm);
+        size(tall);
+    else
+            %Stefan profile
+        LHS=(L*sqrt(pi))/(Cp*(Tc-Ts));
+        RHS=@(L)(exp(-L.^2))./((L.*erf(L)));
+        % Lambda=0
+        % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+        Lambda=fsolve(@(L)RHS(L)-LHS,2);
+        %
+        % while LHS~=RHS
+        % Lambda=Lambda+.00001
+        % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+        % end
+
+        %
+        tall=[0:dt:tmax];%linspace(t0,tmax,dt);
+        ym=2*sqrt(tall)*Lambda*sqrt(K(273));
+
+        eta=@(z,t)z/(2*sqrt(K(273)*t));
+        Ta=@(z,t,zm)Ts+erf(eta(z,t))./erf(Lambda)*(Tc-Ts)./(z<=zm);
+        size(tall);
+    end
+
     
     for i=1:1:numel(tall)
         z=linspace(0,ym(i),nz);
@@ -138,10 +172,15 @@ end
 
 %split initial conditions for pressure-dependent melting
 if pDep==0;
+    if Benchmark==1;
+        Y0=[T0, zm0];
+        [t,Y]=ode45(@(t,Y)StefanBenchmarkODE(Y,nz,K2,k,L,Cp,Ht,Tm,rho,Ts), [linspace(ts,tmax,1001)], Y0);
+    else
     
     Y0=[T0, zb0, b0];
 
     [t,Y]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[ts tmax], Y0);%linspace(ts,tmax,timesteps)],Y0);
+    end
 else
     p0=(rho*g*zm0)*1e-9;
     Tm0=273.2*(1-(p0/0.395))^(1/9);
@@ -257,6 +296,26 @@ RefModelFig(ty,Tiall,Shell/1000,Raall/1E5)
 % title('Nusselt Number','fontsize',20)
 % xlabel('Time (Myr)','fontsize',16)
 % ylabel('Nu','fontsize',16)
+
+if Benchmark==1;
+    tall=tall/(365.24*24*3600)/1e6;
+    RelErr=(ym-ball')./ym
+    figure(7)
+    clf;
+    hold on
+    plot(ty,ball/1000,'b')
+    plot(tall,ym/1000,'r')
+    title('Freezing Front Comparison','fontsize',20)
+    xlabel('Time (Myr)','fontsize',16)
+    ylabel('Layer Thickness (km)','fontsize',16)
+    figure(9)
+    clf;
+    plot(ty,RelErr*100)
+    title('Approximation Error','fontsize',20)
+    xlabel('Time (Myr)','fontsize',16)
+    ylabel('Percent Difference','fontsize',16)
+    
+end
 
 %% Second Run: Increase in heat
 if IncHeat==1;
