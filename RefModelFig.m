@@ -27,7 +27,7 @@ xlabel('Time (Myr)');
 title('Interior Temperature','HorizontalAlignment','center','FontSize',20);
 
 % Uncomment the following line to preserve the X-limits of the axes
-xlim(subplot1,[0 1.5]);
+xlim(subplot1,[0 2.0]);
 box(subplot1,'on');
 % Set the remaining axes properties
 set(subplot1,'FontSize',14,'XGrid','on','YGrid','on');

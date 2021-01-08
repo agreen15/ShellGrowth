@@ -1,4 +1,4 @@
-function H = StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alph,beta,gamma,xi,zeta,Ts,Qd)
+function H = StagnantLidODEMoore(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alph,beta,gamma,xi,Ts,Qd)
 %Unpack Input Vector
 Y=Y';
 b=Y(end); %Convective layer thickness
@@ -47,18 +47,18 @@ Qc=((k(Tc)*(Tm-Ts))/zm);
     Ra=(alph*rho*g*DT*b^3)/(K(Te)*nm);
     f=2*beta-3*gamma;
     Ti=Te+(D*DT*Ra^(-gamma)*((G*b^2)/(k(Te)*DT))^beta); %internal temperature
-    Qt=((k(Tc)*DT)/b)*C*Ra^(xi)*((Ti-Tc)/DT)^zeta; %Heat flow thru upper TBL
+    Qt=((k(Tc)*DT)/b)*C*abs(Ra-678)^(xi); %Heat flow thru upper TBL
     % Conductive lid, finite differential solution to conduction eq.
     T=Y(1:end-2);
     z=linspace(0,zb,nz);
     [Q,z2]=FluxNumerical(T,z);
     Qbot=k(Tc)*Q(end);
-    HBot=(((Qt-Qbot)/(((2*zb-z2(end)))-z2(end)))/(rho*Cp))+Ht(Tc)/(rho*Cp);
+    HBot=((((Qt+0.5*G*b)-Qbot)/(((2*zb-z2(end)))-z2(end)))/(rho*Cp))+Ht(Tc)/(rho*Cp);
     % Movement of interface btwn lid and convective layer
     if HBot>=0
         dzbdt=-(k(Tc)*HBot)/Qbot;
     else
-        dzbdt=-(k(Tc)*HBot)/Qt;
+        dzbdt=-(k(Tc)*HBot)/(Qt+0.5*G*b);
     end
 
     [H,z3]=FluxNumerical(Q,z2);
@@ -67,7 +67,7 @@ Qc=((k(Tc)*(Tm-Ts))/zm);
 
     % coupling
     I=1+(Cp/L)*f*(Ti-Te); %Heat production in shell interior
-    dzmdt=(Qt-G*b+Qd)/(rho*L*I); %freezing/melting
+    dzmdt=(Qt-0.5*G*b+Qd)/(rho*L*I); %freezing/melting
 %end
 dbdt=dzmdt-dzbdt; %change of thickness of the convective layer
 %Results vector: track change in T for lid, movement of layer boundaries 

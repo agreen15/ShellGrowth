@@ -1,7 +1,8 @@
-function Ht=DefineTidalHeat(Tm,E,w,u,q,N,nm,R)
+function Ht=DefineTidalHeatNN(E,w,u,q,R,d,B,N,p)
 
 
 HM=u*(E^2)/w; %max dissipation rate;
+nmax=u/w;
 
 %Y=Y0;
 %T=Y(1:end-1);
@@ -9,15 +10,15 @@ HM=u*(E^2)/w; %max dissipation rate;
 %zm=Y(end); %thickness of lid (km)
 %z=linspace(0,zm,nz);%zm.*(i./nz);
 %dT=T(end)-T(1);
-Yt=(q)/(N*R*Tm^2); 
-A=nm*exp(Yt.*Tm)*w/u;
+%Yt=(q)/(R*Tm^2); 
+%A=nm*exp(Yt.*Tm)*w/u;
 
 
 % X=A*exp(-Yt.*T); %viscosity
 % Hm=2*HM./(X+1./X);
-X=@(T)A*exp(-Yt.*T); %viscosity
-Hm=@(X)(1*(2*HM./(X+1./X))); % volumetric dissipation rate
-Ht=@(T)Hm(X(T));%/roh; % dissipation rate per mass
+X=@(T)((d^(p/N))/(B^(1/N)*E^((N-1)/N)))*exp(q./(N*R*T)); %viscosity
+Hm=@(X)(1*(2*HM./((X./nmax)+(nmax./X)))); % volumetric dissipation rate
+Ht=@(T)Hm(X(T));
 
 
 

@@ -10,9 +10,10 @@ Cp=1930; %Specific heat
 alpha=1.56e-4; %thermal expensivity
 L=284; % heat of fusion
 nm=5e13; %reference viscosity
-E=60*1000; %Activation energy
+E=59.4*1000; %Activation energy
 R=8.3144621; %gas constant
-N=1.8; %Stress exponent
+d=0.1/1000; %ice grain size, mm
+N=1; %Stress exponent
 
 %Set the following flags to 1 to produce figures in Green et al. (2020)
 %If no flags are activated, only Figure 2 (reference model) will be
@@ -22,10 +23,22 @@ N=1.8; %Stress exponent
 IncHeat=0;
 %Pressure-dependent melting flag (for large icy satellites)
 pDep=0;
-%Produces data and rough figure for Figure 4 in Green et al. (2020)
+%Produces data and rough figure for Figure 4 in Green et al. (2021)
 heatloop=0; 
-%Produces raw data for Figure 5 in Green et al. 2020
+%Produces raw data for Figure 6 in Green et al. 2021
 transsect=0;
+%Produces Benchmark comparison with analytical Stefan Solution
+Benchmark=0; 
+%Replaces S+L (2003) scaling laws with Moore (2008) scaling laws
+Moore=0;
+%Produces data directly comparing creep modes
+CreepComp=0;
+
+%Non-Newtonian viscosity treatment flags. If both set to zero, viscosity
+%will be Newtonian Diffusion Creep rheology (as in main results)
+BS=0;  %Basal Slip rheology
+GBS=0; %Grain Boundary Sliding rheology
+%NonNewton=0;
 
 k=@(T)2.21-(0.012*(T-273.2));
 K=@(T)k(T)./(rho*Cp);
@@ -42,8 +55,25 @@ else
     w=1.6177e-06; %orbital frequency: Ganymede
 end
 
-HRad=(4.5e-12)*rho; %Volumetric radiogenic heating rate
+%Rheological parameters
+if BS==1;
+    a=2.2e-7;
+    nm=1e15;
+    N=2.4;
+    p=0;
+    E=(60*1000);
+    %NonNewton=1;
+elseif GBS==1;
+    a=6.2e-14;
+    nm=1e15;
+    N=1.8;
+    p=1.4;
+    E=(49*1000);
+    %NonNewton=1;
+end
 
+HRad=(4.5e-12)*rho; %Volumetric radiogenic heating rate
+Qd=0; %Combined tidal, radiogenic, primordial heat flux from depth
 
 u=3.3e9; %Pa shear modulus
 
@@ -61,30 +91,54 @@ c2=-0.03;%Deschamps Eq16
 B=E/(2*R*c1); %Deschamps Eq18
 % C=c2*DTs; %Deschamps Eq18; variable C used later -> explicit substitution
 Ti=B*(sqrt(1+(2/B)*(Tm-c2*DTs))-1); %Deschamps Eq18
-%define temperature at the base of the conductive layer 
-A=E/(R*Tm);
-ni=nm*exp(A*((Tm/Ti)-1));
-dnidTi=-nm*((A*Tm)/Ti^2)*exp(A*((Tm/Ti)-1));
-DTv=-(ni/dnidTi);%*DTs;
+%define temperature at the base of the conductive layer
+% if NonNewton==1;
+%     DTv=(N*R*Ti^2)/E;
+%     X=@(T)((d^(p/N))/(a^(1/N)*e^((N-1)/N)))*exp(E./(N*R*T));
+%     nmtest=X(Tm)
+%     nstest=X(Ts)
+% else
+    A=E/(N*R*Tm);
+    ni=nm*exp(A*((Tm/Ti)-1));
+    dnidTi=-nm*((A*Tm)/Ti^2)*exp(A*((Tm/Ti)-1));
+    DTv=-(ni/dnidTi);%*DTs;
+% end
 DTe=2.24*DTv;
 Tc=Ti-DTe;
 DT=Tm-Tc; %Temperature drop across the convective layer
 
 
 % convective parameters
-C=0.3446;
-D=1;
-beta=0.75;
-gamma=0.25;
-xi=1/3;
-zeta=4/3;
+if Moore==1;
+    C=0.206;
+    D=1.24;
+    beta=0.75;
+    gamma=0.25;
+    xi=0.318;
+else
+    C=0.3446;
+    D=1;
+    beta=0.75;
+    gamma=0.25;
+    xi=1/3;
+    zeta=4/3;
+end
 
 % setup heating rate function
-Ht=DefineTidalHeat(rho,Tm,e,w,u,E,nm,R,HRad);
+% if NonNewton==1;
+%     Ht=DefineTidalHeatNN(e,w,u,E,R,d,a,N,p);
+%     HtTest=DefineTidalHeat(Tm,e,w,u,E,nm,R);
+%     HtestTMNN=Ht(Tm)
+%     HTestTMN=HtTest(Tm)
+%     HtestTsNN=Ht(Ts)
+%     HTestTsN=HtTest(Ts)
+% else
+    Ht=DefineTidalHeat(Tm,e,w,u,E,N,nm,R);
+% end
 
 % numerical parameters
 nz=100; %Discretization of the conductive profile
-tmax=((2.0)*1e6)*60*60*24*365;%duration of run, Myrs
+tmax=((2.0)*1e6)*60*60*24*365; %duration of run, Myrs
 timesteps=1000;
 dt=tmax/timesteps; %export time step 
 
@@ -105,7 +159,6 @@ else
 end
 b0=zm0-zb0; %initial convective layer thickness
 TinitStefan=1; %flag for Stefan initial profile
-Benchmark=1; %Benchmark comparison between numerical solver and standard analytical stefan problem solution (Turcotte & Schubert, 2002)
 
 if TinitStefan==1;
     if Benchmark==1;
@@ -175,11 +228,15 @@ if pDep==0;
     if Benchmark==1;
         Y0=[T0, zm0];
         [t,Y]=ode45(@(t,Y)StefanBenchmarkODE(Y,nz,K2,k,L,Cp,Ht,Tm,rho,Ts), [linspace(ts,tmax,1001)], Y0);
+    elseif Moore==1;
+        Y0=[T0, zb0, b0];
+
+        [t,Y]=ode45(@(t,Y)StagnantLidODEMoore(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,Ts,Qd),[ts tmax], Y0);%linspace(ts,tmax,timesteps)],Y0);
     else
     
     Y0=[T0, zb0, b0];
 
-    [t,Y]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[ts tmax], Y0);%linspace(ts,tmax,timesteps)],Y0);
+    [t,Y]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[ts tmax], Y0);%linspace(ts,tmax,timesteps)],Y0);
     end
 else
     p0=(rho*g*zm0)*1e-9;
@@ -331,14 +388,14 @@ if IncHeat==1;
         e=6e-10; %Avg tidal strain rate: Ganymede (?)
     end
 
-    Ht=DefineTidalHeat(rho,Tm,e,w,u,E,nm,R,HRad);
+    Ht=DefineTidalHeat(Tm,e,w,u,E,N,nm,R);
     tmax2=((.2)*1e6)*60*60*24*365;
 
     if pDep==0;
 
         Y02=Y(end,:);
         %Y02(end)=Y02(end)-4000; %"Lateral flow" thickness perturbation
-        [t2,Y2]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[linspace(ts,tmax2,timesteps)],Y02);
+        [t2,Y2]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[linspace(ts,tmax2,timesteps)],Y02);
     else
         Y02=Y(end,:);
         %Y02(end)=Y02(end)-4000; %"Lateral flow" thickness perturbation
@@ -477,8 +534,12 @@ if heatloop==1;
     ZMALL=zeros(timesteps,4);
     for i=1:4;
         e=eall(i);
-        Ht=DefineTidalHeat(rho,Tm,e,w,u,E,nm,R,HRad);
-        [ti,Yi]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[linspace(ts,tmax2,timesteps)],Y02);
+        Ht=DefineTidalHeat(Tm,e,w,u,E,N,nm,R);
+        if Moore==1
+            [ti,Yi]=ode45(@(t,Y)StagnantLidODEMoore(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,Ts,Qd),[linspace(ts,tmax2,timesteps)],Y02);
+        else
+            [ti,Yi]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[linspace(ts,tmax2,timesteps)],Y02);
+        end
         ti=ti/(365.24*24*3600)/1e6;
         zballi=Yi(:,end-1);
         balli=Yi(:,end);
@@ -492,7 +553,7 @@ if heatloop==1;
     end
  %%   
     e=3e-10;
-    Ht=DefineTidalHeat(rho,Tm,e,w,u,E,nm,R,HRad);
+    Ht=DefineTidalHeat(Tm,e,w,u,E,N,nm,R);
     YALL2=zeros(102,4);
     TALL2=zeros(timesteps,4);
     ZBALL2=zeros(timesteps,4);
@@ -502,7 +563,11 @@ if heatloop==1;
     %YALL(end-1,:)=[YALL(end-1,1),YALL(end-1,1),YALL(end-1,1),YALL(end-1,1),YALL(end-1,1)];
     for i=1:4;
         Y0i=YALL(:,i);
-        [ti,Yi]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[linspace(ts,tmax3,timesteps)],Y0i);
+        if Moore==1;
+            [ti,Yi]=ode45(@(t,Y)StagnantLidODEMoore(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,Ts,Qd),[linspace(ts,tmax3,timesteps)],Y0i);
+        else
+            [ti,Yi]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[linspace(ts,tmax3,timesteps)],Y0i);
+        end
         ti=ti/(365.24*24*3600)/1e6;
         zballi=Yi(:,end-1);
         balli=Yi(:,end);
@@ -645,7 +710,7 @@ if transsect == 1
         % C=c2*DTs; %Deschamps Eq18; variable C used later -> explicit substitution
         Ti=B*(sqrt(1+(2/B)*(Tm-c2*DTs))-1); %Deschamps Eq18
         %define temperature at the base of the conductive layer 
-        A=E/(R*Tm);
+        A=E/(N*R*Tm);
         ni=nm*exp(A*((Tm/Ti)-1));
         dnidTi=-nm*((A*Tm)/Ti^2)*exp(A*((Tm/Ti)-1));
         DTv=-(ni/dnidTi);%*DTs;
@@ -663,8 +728,8 @@ if transsect == 1
         zeta=4/3;
 
         % setup heating rate function
-        Ht0=DefineTidalHeat(rho,Tm,e0,w,u,E,nm,R,HRad);
-        Ht45=DefineTidalHeat(rho,Tm,e45,w,u,E,nm,R,HRad);
+        Ht0=DefineTidalHeat(Tm,e0,w,u,E,N,nm,R);
+        Ht45=DefineTidalHeat(Tm,e45,w,u,E,N,nm,R);
 
         % numerical parameters
         nz=100; %Discretization of the conductive profile
@@ -731,8 +796,8 @@ if transsect == 1
         end
         Y0=[T0, zb0, b0];
 
-        [to,Yo]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht0,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[ts tmax], Y0);
-        [t45,Y45]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht45,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts),[ts tmax], Y0);
+        [to,Yo]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht0,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[ts tmax], Y0);
+        [t45,Y45]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht45,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[ts tmax], Y0);
 
         zball0=Yo(end,end-1);
         ball0=Yo(end,end);
@@ -754,3 +819,163 @@ if transsect == 1
     ZBALL45trans
     ZMALL45trans
 end
+%%
+if CreepComp == 1
+    
+    nmi=[5e13; 1e15; 1e15];
+    Ei=[(59.4*1000);(60*1000);(49*1000)];
+    Ni=[1;2.4;1.8];
+    e1=1e-10;
+    e2=3e-10;
+        for i=1:3
+            nm=nmi(i);
+            E=Ei(i);
+            N=Ni(i);
+
+            DTs=Tm-Ts; %temperature drop across ice shell
+            Te=(DTs/2)+Ts;
+            Q=(E/(R*Te^2))*DTs;
+
+            %define temperature in well mixed interior according to Deschamps
+            c1=1.43; %Deschamps Eq16
+            c2=-0.03;%Deschamps Eq16
+            B=E/(2*R*c1); %Deschamps Eq18
+            % C=c2*DTs; %Deschamps Eq18; variable C used later -> explicit substitution
+            Ti=B*(sqrt(1+(2/B)*(Tm-c2*DTs))-1); %Deschamps Eq18
+            %define temperature at the base of the conductive layer 
+            A=E/(N*R*Tm);
+            ni=nm*exp(A*((Tm/Ti)-1));
+            dnidTi=-nm*((A*Tm)/Ti^2)*exp(A*((Tm/Ti)-1));
+            DTv=-(ni/dnidTi);%*DTs;
+            DTe=2.24*DTv;
+            Tc=Ti-DTe;
+            DT=Tm-Tc; %Temperature drop across the convective layer
+
+            Ht1=DefineTidalHeat(Tm,e1,w,u,E,N,nm,R);
+            Ht2=DefineTidalHeat(Tm,e2,w,u,E,N,nm,R);
+
+
+            % convective parameters
+            C=0.3446;
+            D=1;
+            beta=0.75;
+            gamma=0.25;
+            xi=1/3;
+            zeta=4/3;
+
+
+            % numerical parameters
+            nz=100; %Discretization of the conductive profile
+            tmax1=((2.5)*1e6)*60*60*24*365;%duration of run, Myrs
+            tmax2=((1.0)*1e6)*60*60*24*365;%duration of run, Myrs
+            timesteps=1000;
+            dt=tmax/timesteps; %export time step 
+
+            %initial conditions
+            zm0=400; %initial ice layer thickness
+            Qp=0;
+            ConductiveStart=1;
+            if ConductiveStart==1; %Initial conditions for conduction-only system
+
+                ThetaC=(Tc-Ts)/DTs;
+                zc=ceil(ThetaC*100);
+                T1=linspace(Ts,Tm,nz);
+                z1=linspace(0,zm0,nz);
+                dTdz=(T1(zc)-T1(zc-1))/(z1(zc)-z1(zc-1));
+                zb0=z1(zc-1)+(Tc-T1(zc-1))/dTdz;
+            else
+                zb0=1.5270e+04; %initial conductive layer thickness
+            end
+            b0=zm0-zb0; %initial convective layer thickness
+            TinitStefan=1; %flag for Stefan initial profile
+
+            if TinitStefan==1;
+                %Stefan profile
+                LHS=(L*sqrt(pi))/(Cp*(Tc-Ts));
+                RHS=@(L)(exp(-L.^2))./((L.*erf(L)));
+                % Lambda=0
+                % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+                Lambda=fsolve(@(L)RHS(L)-LHS,2);
+                %
+                % while LHS~=RHS
+                % Lambda=Lambda+.00001
+                % RHS=(exp(-Lambda^2))/((Lambda*erf(Lambda)))
+                % end
+
+                %
+                tall=[0:dt:tmax];%linspace(t0,tmax,dt);
+                ym=2*sqrt(tall)*Lambda*sqrt(K(Tm));
+
+                eta=@(z,t)z/(2*sqrt(K(Tm)*t));
+                Ta=@(z,t,zm)Ts+erf(eta(z,t))./erf(Lambda)*(Tc-Ts)./(z<=zm);
+                size(tall);
+
+                for j=1:1:numel(tall)
+                    z=linspace(0,ym(j),nz);
+                    %eta=z./(2*sqrt(K*tall(i)));
+                    T(j,:)=Ta(z,tall(j),ym(j));%Ts+(erf(eta)./erf(Lambda)).*(Tm-Ts)./(z<=ym(i));
+                    Z(j,:)=z;
+                end
+
+                ts=dt;%1e12;%tall(is);
+                y0=spline(tall,ym,ts);
+                z0=linspace(0,y0,nz);
+                ts=interp1(ym,tall,y0);
+                %t=0;
+                T0=Ta(z0,ts,y0);
+
+            else
+                T0=[linspace(Ts,Tc,100)];
+                ts=0;
+            end
+            Y0=[T0, zb0, b0];
+
+            [tV1,YV1]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht1,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[linspace(ts,tmax1,timesteps)], Y0);
+            [tV2,YV2]=ode45(@(t,Y)StagnantLidODE(Y,nz,K,k,g,nm,L,Cp,Ht2,Tm,rho,C,D,alpha,beta,gamma,xi,zeta,Ts,Qd),[linspace(ts,tmax2,timesteps)], Y0);
+            tV1=tV1/(365.24*24*3600)/1e6;
+            tV2=tV2/(365.24*24*3600)/1e6;
+
+            zballV1=YV1(:,end-1);
+            ballV1=YV1(:,end);
+            zmallV1=zballV1+ballV1;
+            zballV2=YV2(:,end-1);
+            ballV2=YV2(:,end);
+            zmallV2=zballV2+ballV2;
+            YALL1creep(:,i)=YV1(end,:);
+            TALL1creep(:,i)=tV1*1000;
+            ZBALL1creep(:,i)=zballV1/1000;
+            ZMALL1creep(:,i)=zmallV1/1000;
+            YALL2creep(:,i)=YV2(end,:);
+            TALL2creep(:,i)=tV2*1000;
+            ZBALL2creep(:,i)=zballV2/1000;
+            ZMALL2creep(:,i)=zmallV2/1000;
+            TALL1creep=[TALL1creep TALL1creep];
+            TALL2creep=[TALL2creep TALL2creep];
+            ZALL1creep=[ZBALL1creep ZMALL1creep];
+            ZALL2creep=[ZBALL2creep ZMALL2creep];
+        end
+    figure(15)
+    clf;
+    CreepModeFig(TALL1creep, ZALL1creep, TALL2creep, ZALL2creep)
+%     subplot(1,2,1)
+%     plot1 = plot(TALL1creep,ZBALL1creep,'LineWidth',2,'LineStyle','--');
+%     set(plot1(1),'Color','b','DisplayName','Lid: Diffusion');
+%     set(plot1(2),'Color','c','DisplayName','Lid: Basal Slip');
+%     set(plot1(3),'Color','g','DisplayName','Lid: Grain Boundary Sliding');
+%     hold on
+%     plot2 = plot(TALL1creep,ZMALL1creep,'LineWidth',2);
+%     set(plot2(1),'Color','b','DisplayName','Shell: Diffusion');
+%     set(plot2(2),'Color','c','DisplayName','Shell: Basal Slip');
+%     set(plot2(3),'Color','g','DisplayName','Shell: Grain Boundary Sliding');
+%     subplot(1,2,2)
+%     plot3 = plot(TALL2creep,ZBALL2creep,'LineWidth',2,'LineStyle','--');
+%     set(plot3(1),'Color','b','DisplayName','Lid: Diffusion');
+%     set(plot3(2),'Color','c','DisplayName','Lid: Basal Slip');
+%     set(plot3(3),'Color','g','DisplayName','Lid: Grain Boundary Sliding');
+%     hold on
+%     plot4 = plot(TALL2creep,ZMALL2creep,'LineWidth',2);
+%     set(plot4(1),'Color','b','DisplayName','Shell: Diffusion');
+%     set(plot4(2),'Color','c','DisplayName','Shell: Basal Slip');
+%     set(plot(3),'Color','g','DisplayName','Shell: Grain Boundary Sliding');    
+end
+    
